@@ -1,0 +1,4 @@
+User-agent: *
+Disallow: /backups/
+Disallow: /uploads/
+Disallow: /?page=about

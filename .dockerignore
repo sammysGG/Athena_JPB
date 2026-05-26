@@ -1,0 +1,6 @@
+.git
+.gitignore
+README.md
+GAME_MASTER_NOTES.md
+node_modules
+vendor
