@@ -688,10 +688,10 @@ function render_header(string $title = 'Personnel Business Suite', bool $showToo
     <body>
         <header class="topbar">
             <div class="brand">
-                <a class="logo" href="<?= page_url('home') ?>">JPA</a>
+                <a class="logo" href="<?= page_url('home') ?>">JPB</a>
                 <div class="support">
-                    <strong>If you need help, contact the JPAC using Support or phone</strong><br>
-                    Military: 94560 3360 &nbsp; Civilian: 0141 2246690 &nbsp; Personnel: JPA 94560 5360
+                    <strong>If you need help, contact the JPBC using Support or phone</strong><br>
+                    Military: 94560 3360 &nbsp; Civilian: 0141 2246690 &nbsp; Personnel: JPB 94560 5360
                 </div>
                 <?php if ($showTools): ?>
                     <span class="suite-name">Personnel Business Suite</span>
