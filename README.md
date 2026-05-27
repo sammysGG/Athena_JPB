@@ -4,16 +4,24 @@ A single-container NGINX/PHP mock of a JPB-style corporate personnel portal for 
 
 ## Run
 
-```powershell
-docker compose up --build
+This target deploys natively under systemd (nginx + php-fpm), not Docker. On a
+range box it is provisioned by the Ansible role in `deploy.yml`, which installs
+nginx/php-fpm, clones the repo to `/opt/jpb`, fronts the app with a self-signed
+TLS cert, and installs a boot-time `git reset --hard` update unit.
+
+To run it by hand for local development:
+
+```bash
+# from the repo root, with php8.3-cli + php8.3-sqlite3 installed
+php -S 127.0.0.1:8080 -t public
 ```
 
-Open `http://localhost:8080`.
+Open `https://localhost` (range) or `http://localhost:8080` (local).
 
 Default login:
 
 ```text
-admin / password
+admin / Cool2Pass
 ```
 
 ## What Is Included

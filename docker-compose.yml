@@ -1,8 +1,0 @@
-services:
-  jpb-swag:
-    build: .
-    container_name: jpb-swag
-    ports:
-      - "8080:80"
-      - "443:443"
-    restart: unless-stopped

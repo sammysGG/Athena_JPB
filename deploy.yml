@@ -1,0 +1,239 @@
+---
+# Athena range — JPB (personnel suite) target.
+# Role tasks file: drop in as roles/<role>/tasks/main.yml (flat task list, no
+# play wrapper). Same style as the port-range / twatter / valitsus roles, but
+# this target runs natively under systemd (php-fpm + nginx) — there is no
+# Docker on the box.
+#
+# The lockdown lives in git: the jpb-update.service installed below runs
+# `git reset --hard origin/main` on every boot, so the app/scenario is owned by
+# the GitHub repo and student edits to the code are wiped. The seeded SQLite DB
+# lives in /var/www/data (outside the repo), so blue-team hardening of accounts
+# survives the rebuild.
+
+- name: Install runtime packages (nginx, php-fpm, sqlite, tooling)
+  ansible.builtin.apt:
+    name:
+      - nginx
+      - php8.3-fpm
+      - php8.3-sqlite3
+      - php8.3-cli
+      - sqlite3
+      - openssl
+      - git
+    state: present
+    update_cache: yes
+
+- name: Clone jpb repo
+  ansible.builtin.git:
+    repo: https://github.com/sammysGG/Athena_JPB.git
+    dest: /opt/jpb
+    version: main
+    force: yes
+
+- name: Serve the app as www-data
+  ansible.builtin.file:
+    path: /opt/jpb
+    state: directory
+    owner: www-data
+    group: www-data
+    recurse: yes
+
+- name: Create persistent data dir for the SQLite DB (survives git reset)
+  ansible.builtin.file:
+    path: /var/www/data
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0775'
+
+# Deliberately weak: world-writable upload area is the file-upload -> webshell
+# path students are meant to discover. Do not ship like this elsewhere.
+- name: Ensure the upload area exists and is writable
+  ansible.builtin.file:
+    path: /opt/jpb/public/uploads
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0777'
+
+# Deliberately weak: world-writable /etc/passwd is the intended privesc finding
+# (see GAME_MASTER_NOTES). Range boxes are throwaway training VMs.
+- name: Make /etc/passwd world-writable (training privesc target)
+  ansible.builtin.file:
+    path: /etc/passwd
+    mode: 'o+w'
+
+- name: Point the php-fpm pool at a TCP socket nginx can reach
+  ansible.builtin.lineinfile:
+    path: /etc/php/8.3/fpm/pool.d/www.conf
+    regexp: '^listen = '
+    line: 'listen = 127.0.0.1:9000'
+
+- name: Enable and (re)start php-fpm
+  ansible.builtin.systemd:
+    name: php8.3-fpm
+    enabled: yes
+    state: restarted
+
+- name: Allow HTTP/HTTPS through ufw
+  ansible.builtin.command: "ufw allow {{ item }}/tcp"
+  register: ufw_result
+  changed_when: "'added' in ufw_result.stdout or 'updated' in ufw_result.stdout"
+  failed_when: false
+  loop:
+    - 80
+    - 443
+
+- name: Create TLS cert directory
+  ansible.builtin.file:
+    path: /etc/ssl/range
+    state: directory
+    mode: '0700'
+
+- name: Generate self-signed TLS cert (shared range cert, first deploy only)
+  ansible.builtin.shell:
+    cmd: >
+      openssl req -x509 -nodes -sha256 -days 825 -newkey rsa:2048
+      -keyout /etc/ssl/range/key.pem -out /etc/ssl/range/cert.pem
+      -subj "/C=UK/CN={{ hostname }}.{{ domain }}"
+      -addext "subjectAltName=DNS:{{ hostname }}.{{ domain }}"
+    executable: /bin/bash
+    creates: /etc/ssl/range/cert.pem
+
+# nginx fronts php-fpm directly (no reverse proxy to a container). The
+# intentional weaknesses from the original container image are preserved here:
+# server_tokens on, leaky custom headers, autoindex on /backups and /uploads,
+# and an exposed /nginx_status.
+- name: Configure the jpb nginx site
+  ansible.builtin.copy:
+    dest: /etc/nginx/sites-available/jpb.conf
+    content: |
+      server {
+          listen 80;
+          server_name {{ hostname }}.{{ domain }};
+          return 301 https://$host$request_uri;
+      }
+      server {
+          listen 443 ssl default_server;
+          server_name {{ hostname }}.{{ domain }};
+          root /opt/jpb/public;
+          index index.php index.html;
+
+          ssl_certificate     /etc/ssl/range/cert.pem;
+          ssl_certificate_key /etc/ssl/range/key.pem;
+          ssl_protocols TLSv1.2 TLSv1.3;
+          ssl_ciphers HIGH:!aNULL:!MD5;
+
+          server_tokens on;
+          add_header X-Powered-By "JPB Personnel Business Suite" always;
+          add_header X-Internal-Host "jpb-ebs-app01.corp.local" always;
+
+          client_max_body_size 16m;
+
+          location / {
+              try_files $uri $uri/ /index.php?$query_string;
+          }
+
+          location ~ \.php$ {
+              include fastcgi_params;
+              fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              fastcgi_param PATH_INFO $fastcgi_path_info;
+              fastcgi_pass 127.0.0.1:9000;
+          }
+
+          # Intentionally exposed for the blue team to discover.
+          location /backups/ {
+              autoindex on;
+              autoindex_exact_size off;
+              autoindex_localtime on;
+          }
+
+          # Writable-looking upload area, also intentionally browsable.
+          location /uploads/ {
+              autoindex on;
+              autoindex_exact_size off;
+              autoindex_localtime on;
+          }
+
+          location = /nginx_status {
+              stub_status;
+              allow all;
+          }
+      }
+
+- name: Enable the jpb nginx site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/jpb.conf
+    dest: /etc/nginx/sites-enabled/jpb.conf
+    state: link
+
+- name: Disable the default nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+
+- name: Reload nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
+    enabled: yes
+
+- name: Verify HTTPS is serving the app (login page) through nginx
+  ansible.builtin.uri:
+    url: https://127.0.0.1/?page=login
+    validate_certs: no
+    headers:
+      Host: "{{ hostname }}.{{ domain }}"
+    status_code: 200
+  register: https_health
+  retries: 10
+  delay: 3
+  until: https_health.status == 200
+
+- name: Install boot-time update script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/jpb-update.sh
+    mode: '0755'
+    owner: root
+    group: root
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      cd /opt/jpb
+      git fetch --quiet origin main
+      git reset --hard origin/main
+      chown -R www-data:www-data /opt/jpb
+      # Re-apply the deliberately weak training perms wiped by the reset.
+      chmod 0777 /opt/jpb/public/uploads
+      chmod o+w /etc/passwd
+      systemctl restart php8.3-fpm
+      systemctl reload nginx
+
+- name: Install the jpb-update systemd unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/jpb-update.service
+    mode: '0644'
+    owner: root
+    group: root
+    content: |
+      [Unit]
+      Description=Pull jpb updates from git and restart php-fpm/nginx
+      After=network-online.target php8.3-fpm.service nginx.service
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      WorkingDirectory=/opt/jpb
+      ExecStart=/usr/local/bin/jpb-update.sh
+      StandardOutput=journal
+      StandardError=journal
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Enable the update unit on boot
+  ansible.builtin.systemd:
+    name: jpb-update.service
+    enabled: yes
+    daemon_reload: yes
