@@ -1,3 +1,6 @@
 # Game-master / answer-key material — never ship to the student-facing repo
 GAME_MASTER_NOTES.md
 public/backups/
+
+# README is instructor/scenario notes — never ship to exercise targets
+README.md
