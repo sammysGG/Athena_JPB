@@ -4,3 +4,6 @@ public/backups/
 
 # README is instructor/scenario notes — never ship to exercise targets
 README.md
+
+# scenario doc — keep off deployed targets
+public/uploads/readme.txt
